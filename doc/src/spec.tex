@@ -1,0 +1,400 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%
+%% Filename: 	spec.tex
+%%
+%% Project:	Wishbone controlled FM Transmitter Hack
+%%
+%% Purpose:	This LaTeX file contains all of the documentation/description
+%%		currently provided with this FM transmitter hack.  It's not
+%%		nearly as interesting as the PDF file it creates, so I'd
+%%		recommend reading that before diving into this file.  You
+%%		should be able to find the PDF file in the SVN distribution
+%%		together with this PDF file and a copy of the GPL-3.0 license
+%%		this file is distributed under.  If not, just type 'make'
+%%		in the doc directory and it (should) build without a problem.
+%%
+%%
+%% Creator:	Dan Gisselquist
+%%		Gisselquist Technology, LLC
+%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%%
+%% Copyright (C) 2016, Gisselquist Technology, LLC
+%%
+%% This program is free software (firmware): you can redistribute it and/or
+%% modify it under the terms of  the GNU General Public License as published
+%% by the Free Software Foundation, either version 3 of the License, or (at
+%% your option) any later version.
+%%
+%% This program is distributed in the hope that it will be useful, but WITHOUT
+%% ANY WARRANTY; without even the implied warranty of MERCHANTIBILITY or
+%% FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+%% for more details.
+%%
+%% You should have received a copy of the GNU General Public License along
+%% with this program.  (It's in the $(ROOT)/doc directory, run make with no
+%% target there if the PDF file isn't present.)  If not, see
+%% <http://www.gnu.org/licenses/> for a copy.
+%%
+%% License:	GPL, v3, as defined and found on www.gnu.org,
+%%		http://www.gnu.org/licenses/gpl.html
+%%
+%%
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\documentclass{gqtekspec}
+\project{Wishbone Controlled FM Transmitter Hack}
+\title{Specification}
+\author{Dan Gisselquist, Ph.D.}
+\email{dgisselq (at) opencores.org}
+\revision{Rev.~0.1}
+\begin{document}
+\pagestyle{gqtekspecplain}
+\titlepage
+\begin{license}
+Copyright (C) \theyear\today, Gisselquist Technology, LLC
+
+This project is free software (firmware): you can redistribute it and/or
+modify it under the terms of  the GNU General Public License as published
+by the Free Software Foundation, either version 3 of the License, or (at
+your option) any later version.
+
+This program is distributed in the hope that it will be useful, but WITHOUT
+ANY WARRANTY; without even the implied warranty of MERCHANTIBILITY or
+FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+for more details.
+
+You should have received a copy of the GNU General Public License along
+with this program.  If not, see \texttt{http://www.gnu.org/licenses/} for a
+copy.
+\end{license}
+\begin{revisionhistory}
+0.1 & 6/15/2016 & Gisselquist & First Draft \\\hline
+\end{revisionhistory}
+% Revision History
+% Table of Contents, named Contents
+\tableofcontents
+% \listoffigures
+\listoftables
+\begin{preface}
+After watching someone demonstrate a Python hack that turned a Raspberry Pi
+into a poor man's FM transmitter, I decided that I should try to see if I could
+do the same with an FPGA.  Indeed, it should be easier with an FPGA: the FPGA
+has complete control of the clock, as well as what the data line does.
+Therefore, this hack attempts to turn a GPIO line into an FM transmitter line
+for an antenna.
+\end{preface}
+
+\chapter{Introduction}
+\pagenumbering{arabic}
+\setcounter{page}{1}
+
+This project is a hack.
+
+It is not intended, nor appropriate, for any commercial or otherwise
+useful product.  Broadcasting on commercial FM channels has legal implications
+associated with it.  I am not recommending that you turn your FPGA into an
+illegal FM transmitter.
+
+The purpose of this project is to show that an FPGA's outputs can be used to
+create a (nearly) analog FM output.
+
+As the preface mentions, this project is also about one-upsmanship.  Just
+because your Raspberry Pi can do something doesn't mean my FPGA can't.  Here,
+let me prove to you that an FPGA can create and broadcast on a commercial
+FM radio channel.
+
+As with any specification, this one is broken into sections or chapters.  
+Chap.~\ref{ch:ops} will start off by explaining how to use this core.
+Chap.~\ref{ch:regs} will then discuss the registers in detail.  This may seem
+like rehashing the Chap.~\ref{ch:ops} chapter, but the information is presented
+in a different order.  Chap.~\ref{ch:wb} then presents the wishbone data sheet
+necessary for any wishbone compliant core.  Finally, Chap.~\ref{ch:io} walks
+through the I/O ports of the core. 
+
+% \chapter{Architecture}
+\chapter{Operation}\label{ch:ops}
+
+From a logical standpoint, the operation of this core is quite simple.  Just
+follow the following steps:
+\begin{enumerate}
+\item Select the frequency ``channel'' to transmit on.
+\item Adjust the sample rate to set how fast output samples will be sent to the
+	device.
+\item Send the first sample to the core
+\item Wait for an interrupt, then send the next sample to the core
+\item Repeat step 4 until the desired transmission is done.
+\item Once transmission is complete, set the frequency ``channel'' slash 
+	NCO step size to zero.
+\item Set the next sample to zero.
+\item Disable, in your interrupt controller (external to this core) the
+	interrupt generated by this core.
+\end{enumerate}
+
+Internally, the core attempts to generate a square wave at a frequency given by
+the set frequency plus an amount given by the sample value times a constant.
+To do this, the core maintains a 32~bit counter which will roll over at the
+carrier
+frequency times per second.  The top bit of this counter becomes the output
+bit for the transmitter.   The counter is incremented every clock by an amount
+used to set the carrier frequency, plus an amount given by the input sample.
+
+For example, let's assume that the FPGA is running with an 80~MHz clock.
+To toggle the output line at a rate of 20~Mhz, one need only set the counter
+increment to {\tt 0x40000000}.  The top bit will, over time, trace through
+{\tt 0, 0, 1, 1 }--creating a square wave at 20~MHz.  As a rather interesting
+by product of the fact that this is a square wave is that this 20~MHz tone
+will have artifacts at odd harmonics of 20~MHz: 60~MHz, 100~MHz, 140~MHz, etc.
+The energy in each of these harmonics will decrease, dependent upon both the
+FPGA switching speed and the nature of a square wave.  In particular, the
+100~MHz harmonic will have 13.6~dB less power than the fundamental at 20~MHz.
+
+Now, if we add a value of {\tt 0x7fff} times 32 to this counter increment,
+creating a new increment of {\tt 0x400fffe0}, the new counter will roll over
+as many times in $2^{32}$ clocks, creating a frequency of roughly 
+20.019~MHz. It's fifth harmonic, however, will be at 100.097~MHz, nicely at the
+edge, if not a little beyond, the frequency range of FM broadcast radio.
+
+By changing the offset to the counter increment with each sample, we create a
+Frequency Modulation.  This is what allows us to generate an FM waveform
+similar to that in the FM Broadcast band.
+
+If only life were that simple, we'd be done at this point.
+
+The next part of the operation of this hack is the antenna.  For best
+performance, this output waveform needs to be fed into an antenna with a DC
+block and ground as the other lead and a DC block.  Ideally, this antenna
+should be impedence matched to the board as well.
+
+For the purposes of our hack, we will ignore these details and hope to 
+demonstrate success with just the previously discussed logic.
+
+\section{Software Example}
+
+Before leaving our concept of operation, let's walk through some code which 
+was used to demonstrate this board.  The demonstration itself was done using
+a ZipCPU, together with a modified version of the XuLA2-LX25 SoC, both
+available from OpenCores.\footnote{That is, the XuLA2-LX25 SoC is available
+from OpenCores, as is the ZipCPU, but the modified version is not posted.  It
+just didn't seem worth it to maintain a simple hack there.}
+
+The first step is to set the frequency channel of the board.  Here, we set it
+to $91.9$~MHz, based upon an 80~MHz internal oscillator clock.
+\begin{eqnarray}
+{\mbox{\tt sys->io\_fmtx\_nco}} &=& \mbox{\tt 0x26147ae1;}
+\end{eqnarray}
+
+The next step is to set the sample rate of the device.  In my case, I set this
+as a parameter to the module.  However, it can also be set here as a run time
+configuration parameter:
+\begin{eqnarray}
+{\mbox{\tt sys->io\_fmtx\_audio}} &=& \mbox{\tt 1814<<16;}
+\end{eqnarray}
+
+For our example, we'll poll the interrupt controller to see when the
+{\tt INT\_FM} interrupt line goes high:
+\begin{eqnarray}
+{\mbox{\tt while((sys->io\_pic \& INT\_FM)==0) ;}}
+\end{eqnarray}
+
+Once it goes high, we can send a sample to the transmitter,
+\begin{eqnarray}
+{\mbox{\tt sys->io\_fmtx\_audio}} &=& \mbox{\tt sample \& 0x0ffff};
+\end{eqnarray}
+
+We now repeat the process of checking the transmitter for readiness to send the next sample, and sending samples, until we are done.
+
+Once complete, we simply turn the module off:
+\begin{eqnarray}
+{\mbox{\tt sys->io\_fmtx\_nco}} &=& \mbox{\tt 0;} \\
+{\mbox{\tt sys->io\_fmtx\_audio}} &=& \mbox{\tt 0;}
+\end{eqnarray}
+
+
+That's it!  It's really quite simple to use.
+ 
+\chapter{Registers}\label{ch:regs}
+
+This FM Transmitter core supports two registers, as listed in
+Tbl.~\ref{tbl:reglist}: a next sample register, {\tt SAMPLE}, and a carrier
+frequency control register called {\tt NCOSTEP}.
+\begin{table}[htbp]
+\begin{center}
+\begin{reglist}
+SAMPLE	& 0 & 32 & R/W & Controls the sample value out of the transmitter,
+	as well as the sample rate of the transmitters interrupts requesting
+	further samples.\\\hline
+NCOSTEP	& 1 & 32 & R(/W) & Controls the step size of the pseudo-oscillator
+	controlling the RF frequency.  Appropriate writes to this register
+	will determine what channel the FM transmitter broadcasts on.
+        \\\hline
+\end{reglist}\caption{List of Registers}\label{tbl:reglist}
+\end{center}\end{table}
+Each register will be discussed in detail in this chapter.
+
+\section{Sample Register}
+The bits in the control register are defined in Tbl.~\ref{tbl:sample}.
+\begin{table}[htbp]
+\begin{center}
+\begin{bitlist}
+16--31 & R/W &  This is the number of clocks between interrupts.  Hence, to
+	transmit from a waveform file sampled at a rate of $R$~samples per
+	second, from an FPGA with a clock rate of $F$~Hz, set this value
+	to $F/R$.  For example, to transmit at 44.1~kHz from an FPGA with
+	an 80~MHz clock, set this value to 1814.
+
+	Writing a value of zero to this register has no effect, allowing
+	a user to only write the sample value at each write without adjusting
+	the sample rate.\\\hline
+0--15 & W & Signed, twos complement, next sample to be broadcast.\\\hline
+1--15 & R & Signed, twos complement, current sample being broadcast.\\\hline
+0 & R & A 1'b1 if the interrupt is currently active, otherwise zero.  The
+	actual lowest bit of the data value in the transmitter cannot be read
+	out.\\\hline
+\end{bitlist}
+\caption{Sample Register}\label{tbl:sample}
+\end{center}\end{table}
+
+Basically, in sum, the top 16~bits determine the sample rate of the audio
+being sent to the device.  Perhaps more accurately, they set the number of
+clocks between assertions of the CPU interrupt line.  The core will internally
+run a timer at an interval given by these bits.  When the timer is up, it will
+transmit its next sample, assert an interrupt, and restart the timer with this
+value.  The CPU will then have until the timer expires to provide the next
+sample.  Writing to this register with these bits set to zero will cause them
+to be ignored.
+
+It should be possible to run this from a DMA controller, although I have not
+tried to do so.
+
+The lower 16 bits of this register, when written to, control the next audio
+sample out of the device.  When read from, they return the current audio sample
+being produced by the device, and in the low order bit whether or not an
+interrupt is currently being asserted.
+
+\section{Carrier Frequency Control Register}
+Based upon Nyquist principles, properly producing a sampled tone requires 
+samples that are at least twice the frequency of the desired tone.  In the
+case of commercial FM in the US, the highest frequency may be roughly 110~MHz.
+This means that the FPGA must produce a sampled output using a clock of at
+least 220~MHz.  
+
+My FPGA boards don't clock that high.  Instead, I can clock my Spartan--6 boards
+at 80~MHz.  While this should be sufficient for transmitting in the Citizen's
+Band of 26~to 28~MHz, it is entirely insufficient for transmitting at commercial
+radio.
+
+Instead, to reach these really high speeds, this core exploits what
+is normally an undesired consequence of sampling: aliasing.  Basically, that 
+means that it is possible to produce a tone at some frequency, such as 10~MHz,
+as well as your clock rate plus that frequency, or 90~MHz in my case.  The 
+90~MHz output is often considered an undesirable artifact of the square wave
+outputs produced by the FPGA, but in our case we exploit this.
+
+Now that all that is said, we can discuss setting the Carrier Frequency
+Control Reigster.  This register is set when you wish to begin transmitting
+to:
+\begin{eqnarray}
+{\tt CFCR} &=& \left\lfloor \frac{2^{32} f_{ch}}{f_{\mbox{\tiny FPGA}}}
+		+\frac{1}{2}\right\rfloor
+\end{eqnarray}
+where $f_{ch}$ is the center frequency you wish to transmit on, and
+$f_{\mbox{\tiny FPGA}}$ is your FPGA clock frequency.  Note that this value
+will be greater than $2^{32}$ for my setup, since the frequency of my FPGA
+is less than that of the channel I wish to transmit on.  In this case, just
+throw away any bits above the lower thirty--two and continue.
+
+As an example, my FPGA's clock runs at 80~MHz.  In order to transmit at 
+91.9~MHz, I would then set the {\tt CFCR} register to 
+\hbox{0x26147ae1}.
+
+\chapter{Wishbone Datasheet}\label{chap:wishbone}\label{ch:wb}
+Tbl.~\ref{tbl:wishbone}
+\begin{table}[htbp]
+\begin{center}
+\begin{wishboneds}
+Revision level of wishbone & WB B4 spec \\\hline
+Type of interface & Slave, Read/Write, pipeline reads supported \\\hline
+Port size & 32--bit \\\hline
+Port granularity & 32--bit \\\hline
+Maximum Operand Size & 32--bit \\\hline
+Data transfer ordering & (Irrelevant) \\\hline
+Clock constraints & None.\\\hline
+Signal Names & \begin{tabular}{ll}
+		Signal Name & Wishbone Equivalent \\\hline
+		{\tt i\_wb\_clk} & {\tt CLK\_I} \\
+		{\tt i\_wb\_cyc} & {\tt CYC\_I} \\
+		{\tt i\_wb\_stb} & {\tt STB\_I} \\
+		{\tt i\_wb\_we} & {\tt WE\_I} \\
+		{\tt i\_wb\_addr} & {\tt ADR\_I} \\
+		{\tt i\_wb\_data} & {\tt DAT\_I} \\
+		{\tt o\_wb\_ack} & {\tt ACK\_O} \\
+		{\tt o\_wb\_stall} & {\tt STALL\_O} \\
+		{\tt o\_wb\_data} & {\tt DAT\_O}
+		\end{tabular}\\\hline
+\end{wishboneds}
+\caption{Wishbone Datasheet}\label{tbl:wishbone}
+\end{center}\end{table}
+is required by the wishbone specification, and so 
+it is included here.  The big thing to notice is that this core
+acts as a wishbone slave, and that all accesses to any local
+registers become 32--bit reads and writes to this interface. 
+
+\chapter{IO Ports}\label{ch:io}
+
+The ports are listed in Table.~\ref{tbl:ioports}.
+\begin{table}[htbp]
+\begin{center}
+\begin{portlist}
+{\tt i\_clk} & 1 & Input & The clock synchronizing the entire core.\\\hline
+{\tt i\_wb\_cyc} & 1 & Input & Indicates a wishbone bus cycle is active when
+		high.  \\\hline
+{\tt i\_wb\_stb} & 1 & Input & Indicates a wishbone bus cycle for this
+	peripheral when high.  (See the wishbone spec for more details) \\\hline
+{\tt i\_wb\_we} & 1 & Input & Write enable, allows indicates a write to one of
+	the two registers when {\tt i\_wb\_stb} is also high.
+        \\\hline
+{\tt i\_wb\_addr} & 1 & Input & A single address line, set to zero to access the
+		configuration and control register, to one to access the data
+		register.  \\\hline
+{\tt i\_wb\_data} & 32 & Input & Data used when writing to the core.  Valid
+		when {\tt i\_wb\_cyc}, {\tt i\_wb\_stb}, and {\tt i\_wb\_we}
+		are all high, ignored otherwise.  \\\hline
+{\tt o\_wb\_ack} & 1 & Output & Wishbone acknowledgement.  This line will go
+		high on the clock after any wishbone access.\\\hline
+{\tt o\_wb\_stall} & 1 & Output & Required by the wishbone spec, but always
+		set to zero in this implementation.
+		\\\hline
+{\tt o\_wb\_data} & 32 & Output & Value read, whether the next sample register
+	or the nco step register, headed back to the wishbone bus master. 
+	These bits will be valid during any
+        read cycle when the {\tt o\_wb\_ack} line is high.
+        \\\hline
+{\tt o\_tx} & 1 & Output & A one wire output value to be sent to the ``antenna''
+	output pin of your FPGA.\\\hline
+{\tt o\_int} & 1 & Output & True whenever the next sample has transitioned
+	to the current sample, until a new next sample is written. \\\hline
+\end{portlist}
+\caption{List of IO ports}\label{tbl:ioports}
+\end{center}\end{table}
+Of these ports, the {\tt i\_wb\_*} and the {\tt o\_wb\_*} ports are all
+defined by the wishbone specification.  This leaves two ports of interest,
+{\tt o\_tx} and {\tt o\_int}.
+
+The {\tt o\_tx} output is the FM transmitter output.  This output needs to be
+wired off of your board to your FM transmit antenna.  Should your board not have
+such an antenna, one can often be improvised by sending this output to any
+available output ports from your FPGA.  The more GPIO's that are set with this
+value, the more power the device will output and likewise the better the output
+may approximate an FM antenna.
+
+Finally, the {\tt o\_int} line is an interrupt line to be sent to whatever
+controller is controlling the transmitter.  This interrupt line will be set
+whenever the transmitter is ready for a new sample.  It is also self clearing, 
+so that sending a sample to the transmitter will turn this off until the next
+value is needed.
+
+% Appendices
+% Index
+\end{document}
+
+

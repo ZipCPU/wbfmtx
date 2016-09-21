@@ -1,0 +1,13 @@
+CAPI=1
+[main]
+description = A Wishbone Controlled FM Transmitter Hack
+
+[fileset rtl]
+files = rtl/wbfmtxhack.v
+file_type = verilogSource
+
+[provider]
+name=github
+user=ZipCPU
+repo=wbfmtx
+version = master
