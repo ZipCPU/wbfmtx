@@ -1,0 +1,98 @@
+################################################################################
+##
+## Filename: 	wbfmtxhack.txt
+##
+## Project:	A Wishbone Controlled FM Transmitter Hack
+##
+## Purpose:	Controls how the wishbone FM transmitter device connects
+##		to an AutoFPGA enabled design.  Include this file with your
+##	AutoFPGA build, and place wbfmtxhack.v into your design, in order to
+##	get wbfmtxhack support integrated into your design.
+##
+## Creator:	Dan Gisselquist, Ph.D.
+##		Gisselquist Technology, LLC
+##
+################################################################################
+##
+## Copyright (C) 2018, Gisselquist Technology, LLC
+##
+## This program is free software (firmware): you can redistribute it and/or
+## modify it under the terms of  the GNU General Public License as published
+## by the Free Software Foundation, either version 3 of the License, or (at
+## your option) any later version.
+##
+## This program is distributed in the hope that it will be useful, but WITHOUT
+## ANY WARRANTY; without even the implied warranty of MERCHANTIBILITY or
+## FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License
+## for more details.
+##
+## You should have received a copy of the GNU General Public License along
+## with this program.  (It's in the $(ROOT)/doc directory.  Run make with no
+## target there if the PDF file isn't present.)  If not, see
+## <http://www.gnu.org/licenses/> for a copy.
+##
+## License:	GPL, v3, as defined and found on www.gnu.org,
+##		http://www.gnu.org/licenses/gpl.html
+##
+##
+################################################################################
+##
+##
+@PREFIX=fmtx
+@DEVID=WBFMHACK
+@ACCESS=@$(DEVID_ACCESS)
+@NADDR=2
+@$DEFAULT_FREQUENCY=44100
+@$DEFAULT_RELOAD = (@$(CLOCK.FREQUENCY)+@$(DEFAULT_FREQUENCY)/2)
+			/ @$(DEFAULT_FREQUENCY)
+@SLAVE.TYPE=DOUBLE
+@REGS.NOTE=// FM transmitter registers
+@REGS.N=2
+@REGS.0=0 R_FMRATE FMRATE FMSAMPLE
+@REGS.1=1 R_@$(DEVID)_FREQUENCY
+@OSERDES = 1
+@TOP.PARAM=
+	parameter	@$(DEVID)_USES_OSERDES = @$(OSERDES);
+@MAIN.PARAM=
+	parameter	@$(DEVID)_USES_OSERDES = @$(OSERDES);
+@MAIN.PORTLIST= o_@$(PREFIX)_tx
+@MAIN.IODECL=
+	output	wire	[((@$(DEVID)_USES_OSERDES)?7:0):0]	o_@$(PREFIX)_tx;
+@MAIN.INSERT=
+	wbfmtxhack @$(PREFIX)i(i_clk, 1'b0,
+		wb_cyc, wb_stb, wb_we, wb_addr[0], wb_data,
+			@$(PREFIX)_ack, @$(PREFIX)_stall, @$(PREFIX)_data,
+		o_@$(PREFIX)_tx, @$(PREFIX)_int);
+@MAIN.ALT=
+	assign	o_@$(PREFIX)_tx = 0;
+@INT.INTLIST= @$(DEVID)INT
+@INT.WBFMHACKINT.WIRE=@$(PREFIX)_int
+# REGDEFS.H.INSERT=
+# @SIM.DEFNS=
+# @SIM.INIT=
+# @SIM.SETRESET=
+# @SIM.CLRRESET=
+# @SIM.METHODS=
+# @SIM.TICK=
+@BDEF.DEFN=
+#ifndef	FMTXHACK_H
+#define	FMTXHACK_H
+
+#define	FMTXRELOAD(X)	(X << 16)
+#define	FMTXCHANNEL(X)	@$(OSERDES)					 \
+		? ((4.0 * @$(CLOCK.FREQUENCY)) / (float)(X*1e6))	 \
+		: (@$(CLOCK.FREQUENCY) / (float)(X * 1e6))
+#define	FMTXINTBIT	1
+
+typedef	struct	FMTXHACK_S {
+	unsigned	fm_sample, fm_ncostep;
+} FMTXHACK;
+
+#endif	// FMTXHACK_H
+
+@BDEF.IONAME= _@$(PREFIX)
+@BDEF.OSDEF= _BOARD_HAS_@$(DEVID)
+@BDEF.OSVAL=
+static volatile @$(DEVID) *const @$(BDEF.IONAME) = ((@$(DEVID) *)@$.IOBASE);
+@RTL.MAKE.GROUP=@$(DEVID)
+@RTL.MAKE.FILES=wbfmtxhack.v
