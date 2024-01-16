@@ -1,7 +1,7 @@
 ################################################################################
 ##
 ## Filename: 	wbfmtxhack.txt
-##
+## {{{
 ## Project:	A Wishbone Controlled FM Transmitter Hack
 ##
 ## Purpose:	Controls how the wishbone FM transmitter device connects
@@ -13,9 +13,9 @@
 ##		Gisselquist Technology, LLC
 ##
 ################################################################################
-##
-## Copyright (C) 2018-2020, Gisselquist Technology, LLC
-##
+## }}}
+## Copyright (C) 2018-2024, Gisselquist Technology, LLC
+## {{{
 ## This program is free software (firmware): you can redistribute it and/or
 ## modify it under the terms of  the GNU General Public License as published
 ## by the Free Software Foundation, either version 3 of the License, or (at
@@ -30,14 +30,15 @@
 ## with this program.  (It's in the $(ROOT)/doc directory.  Run make with no
 ## target there if the PDF file isn't present.)  If not, see
 ## <http://www.gnu.org/licenses/> for a copy.
-##
+## }}}
 ## License:	GPL, v3, as defined and found on www.gnu.org,
+## {{{
 ##		http://www.gnu.org/licenses/gpl.html
 ##
 ##
 ################################################################################
 ##
-##
+## }}}
 @PREFIX=fmtx
 @DEVID=WBFMHACK
 @ACCESS=@$(DEVID_ACCESS)
@@ -52,17 +53,20 @@
 @REGS.1=1 R_@$(DEVID)_FREQUENCY
 @OSERDES = 1
 @TOP.PARAM=
-	parameter	@$(DEVID)_USES_OSERDES = @$(OSERDES);
+	parameter [0:0]	@$(DEVID)_USES_OSERDES = @$(OSERDES);
 @MAIN.PARAM=
-	parameter	@$(DEVID)_USES_OSERDES = @$(OSERDES);
+	parameter [0:0]	@$(DEVID)_USES_OSERDES = @$(OSERDES);
 @MAIN.PORTLIST= o_@$(PREFIX)_tx
 @MAIN.IODECL=
-	output	wire	[((@$(DEVID)_USES_OSERDES)?7:0):0]	o_@$(PREFIX)_tx;
+	output	wire	[7:0]	o_@$(PREFIX)_tx;
 @MAIN.INSERT=
-	wbfmtxhack @$(PREFIX)i(i_clk, 1'b0,
-		wb_cyc, wb_stb, wb_we, wb_addr[0], wb_data,
-			@$(PREFIX)_ack, @$(PREFIX)_stall, @$(PREFIX)_data,
-		o_@$(PREFIX)_tx, @$(PREFIX)_int);
+	wbfmtxhack #(
+		.OPT_SERDES(@$(DEVID)_USES_OSERDES)
+	) u_@$(PREFIX)(
+		i_clk,
+		@$(SLAVE.PORTLIST),
+		o_@$(PREFIX)_tx, @$(PREFIX)_int
+	);
 @MAIN.ALT=
 	assign	o_@$(PREFIX)_tx = 0;
 @INT.INTLIST= @$(DEVID)INT

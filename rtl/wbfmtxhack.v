@@ -1,7 +1,7 @@
 ////////////////////////////////////////////////////////////////////////////////
 //
 // Filename: 	wbfmtxhack.v
-//		
+// {{{
 // Project:	A Wishbone Controlled FM Transmitter Hack
 //
 // Purpose:	This Hack is based off of two things: 1) the interface spec
@@ -17,7 +17,7 @@
 //
 //	WB Control/Registers:
 //	1'b0:	Next Sample
-//
+// {{{
 //		The top bits of this 'next sample' will indicate the number
 //		of clock ticks before we generate a need next sample interrupt.
 //		If these top bits are zero, the sample rate will not be
@@ -32,9 +32,9 @@
 //		Since we'll be dealing with FM modulation, we'll try to arrange
 //		that this sixteen bit sample will correspond to a maximum
 //		FM deviation of about 75 kHz.
-//
-//
+// }}}
 //	1'b1:	The Oscillator "Frequency" (really stepsize).  This should be
+// {{{
 //		used to control/determine the "RF frequency" this device can
 //		transmit on.  
 //
@@ -52,7 +52,7 @@
 //
 //		This also gives us about 20 mHz resolution for our Carrier
 //		frequency--overkill perhaps, but it should work.
-//
+// }}}
 //	So ... how do we create our 75 kHz deviation?  We want:
 //
 //	MAX_STEPSIZE = 2^32 * (X + 75kHz * sample / 2^15) / CLKSPEED
@@ -63,6 +63,7 @@
 //	nearly the exact constant we want.
 //
 // OSERDES:
+// {{{
 //	Okay, the first version was fun and worked ... okay, but ... can we do
 //	better?  I mean, we lost over 10dB by undersampling, and most(many?)
 //	FPGA's have OSERDES components that will allow bits to toggle faster
@@ -88,14 +89,14 @@
 //
 //	The component created with `define OSERDES is designed to allow such
 //	hypotheses to be tested.
-//
+// }}}
 // Creator:	Dan Gisselquist, Ph.D.
 //		Gisselquist Technology, LLC
 //
 ////////////////////////////////////////////////////////////////////////////////
-//
-// Copyright (C) 2015-2020, Gisselquist Technology, LLC
-//
+// }}}
+// Copyright (C) 2015-2024, Gisselquist Technology, LLC
+// {{{
 // This program is free software (firmware): you can redistribute it and/or
 // modify it under the terms of  the GNU General Public License as published
 // by the Free Software Foundation, either version 3 of the License, or (at
@@ -110,86 +111,93 @@
 // with this program.  (It's in the $(ROOT)/doc directory.  Run make with no
 // target there if the PDF file isn't present.)  If not, see
 // <http://www.gnu.org/licenses/> for a copy.
-//
+// }}}
 // License:	GPL, v3, as defined and found on www.gnu.org,
+// {{{
 //		http://www.gnu.org/licenses/gpl.html
-//
 //
 ////////////////////////////////////////////////////////////////////////////////
 //
-//
-module	wbfmtxhack(i_clk, 
+`default_nettype none
+// }}}
+module	wbfmtxhack #(
+		// 44.1kHz at a 80MHz clock
+		parameter	DEFAULT_RELOAD = 16'd1814,
+		parameter [0:0]	OPT_SERDES = 1'b0
+	) (
+		// {{{
+		input	wire		i_clk,
+		//
 		// Wishbone interface
-		i_wb_cyc, i_wb_stb, i_wb_we, i_wb_addr, i_wb_data,
-			o_wb_ack, o_wb_stall, o_wb_data,
-		o_tx, o_int);
-	parameter	DEFAULT_RELOAD = 16'd1814; // 44.1kHz at a 80MHz clock
-	input	i_clk;
-	input	i_wb_cyc, i_wb_stb, i_wb_we;
-	input		i_wb_addr;
-	input	[31:0]	i_wb_data;
-	output	reg		o_wb_ack;
-	output	wire		o_wb_stall;
-	output	reg	[31:0]	o_wb_data;
-`ifdef	USE_OSERDES
-	output	wire	[7:0]	o_tx;
-`else
-	output	wire		o_tx;
-`endif
-	output	reg		o_int;
+		input	wire		i_wb_cyc, i_wb_stb, i_wb_we,
+		input	wire		i_wb_addr,
+		input	wire	[31:0]	i_wb_data,
+		input	wire	[3:0]	i_wb_sel,
+		output	wire		o_wb_stall,
+		output	reg		o_wb_ack,
+		output	reg	[31:0]	o_wb_data,
+		output	wire	[7:0]	o_tx,
+		output	reg		o_int
+		// }}}
+	);
 
+	// Local declarations
+	// {{{
 	reg	[31:0]	nco_step;
+	reg	[15:0]	reload_value;
+	reg		ztimer;
+	reg	[15:0]	timer;
+	reg	[15:0]	next_sample, sample_out;
+	reg		next_valid;
+	reg	[31:0]	nco_phase;
+	// }}}
 
 	// How often shall we create an interrupt?  Every reload_value clocks!
 	// If VARIABLE_RATE==0, this value will never change and will be kept
 	// at the default reload rate (44.1 kHz, for a 100 MHz clock)
-	reg	[15:0]	reload_value;
 	initial	reload_value = DEFAULT_RELOAD;
 
 	// Data write, but we use the upper 16 bits to set our sample rate.
 	// If these bits are zero, we ignore the write--allowing users to
 	// write samples without adjusting the sample rate.
 	always @(posedge i_clk) // Set sample rate
-		if ((i_wb_cyc)&&(i_wb_stb)&&(~i_wb_addr)&&(i_wb_we)
-				&&(|i_wb_data[31:16]))
-			reload_value <= i_wb_data[31:16];
+	if ((i_wb_cyc)&&(i_wb_stb)&&(~i_wb_addr)&&(i_wb_we)
+			&&(|i_wb_data[31:16]) && (&i_wb_sel[3:2]))
+		reload_value <= i_wb_data[31:16];
 
 	// Set the NCO transmit frequency
 	initial	nco_step = 32'h00;
 	always @(posedge i_clk)
-		if ((i_wb_cyc)&&(i_wb_stb)&&(i_wb_addr)&&(i_wb_we))
-			nco_step <= i_wb_data[31:0];
+	if ((i_wb_cyc)&&(i_wb_stb)&&(i_wb_addr)&&(i_wb_we) &&(&i_wb_sel[3:0]))
+		nco_step <= i_wb_data[31:0];
 
-	reg		ztimer;
-	reg	[15:0]	timer;
 	initial	ztimer = 1'b0;
 	always @(posedge i_clk) // Be true when the timer is zero
 		ztimer <= (timer[15:0] == 16'h1);
+
 	initial	timer = reload_value;
 	always @(posedge i_clk)
-		if (ztimer)
-			timer <= reload_value;
-		else
-			timer <= timer - 16'h1;
+	if (ztimer)
+		timer <= reload_value;
+	else
+		timer <= timer - 16'h1;
 
-	reg	[15:0]	next_sample, sample_out;
 	initial	sample_out  = 16'h00;
 	initial	next_sample = 16'h00;
 	always @(posedge i_clk)
-		if (ztimer)
-			sample_out <= next_sample;
+	if (ztimer)
+		sample_out <= next_sample;
 
-	reg		next_valid;
 	initial	next_valid = 1'b1;
 	initial	next_sample = 16'h8000;
 	always @(posedge i_clk) // Data write
-		if ((i_wb_cyc)&&(i_wb_stb)&&(i_wb_we)&&(~i_wb_addr))
-		begin
-			// Write with two's complement data
-			next_sample <= i_wb_data[15:0];
-			next_valid <= 1'b1;
-		end else if (ztimer)
-			next_valid <= 1'b0;
+	if ((i_wb_cyc)&&(i_wb_stb)&&(i_wb_we)&&(!i_wb_addr) && (&i_wb_sel[1:0]))
+	begin
+		// Write with two's complement data
+		next_sample <= i_wb_data[15:0];
+		next_valid <= 1'b1;
+	end else if (ztimer)
+		next_valid <= 1'b0;
 
 	// The interrupt line will remain high until writing a new data value
 	// clears it.  This design does not permit turning off this interrupt.
@@ -197,68 +205,83 @@ module	wbfmtxhack(i_clk,
 	// interrupt controller.
 	initial	o_int = 1'b0;
 	always @(posedge i_clk)
-		o_int <= (~next_valid);
+		o_int <= (!next_valid);
 
-`ifdef	USE_OSERDES
-	// If we use an OSERDES on our final output, we should be able to 
-	// oversample by a factor of 4x (or perhaps more, but this works the
-	// 4x number).  Here is an example of figuring out what both of those
-	// 4x oversamples are--first the primary, calculated as before, but then
-	// also the alternate.
-	reg	[31:0]	nco_phase, nco_phase_a, nco_phase_b, nco_phase_c,
-			sample_step, tripl_step, tripl_nco_step;
-	initial	nco_base   = 32'h00;
+	generate if (OPT_SERDES)
+	begin : GEN_SERDES
+		// If we use an OSERDES on our final output, we should be able
+		// to oversample by a factor of 4x (or perhaps more, but this
+		// works the 4x number).  Here is an example of figuring out
+		// what both of those 4x oversamples are--first the primary,
+		// calculated as before, but then also the alternate.
+		reg	[31:0]	nco_phase_a, nco_phase_b, nco_phase_c,
+				sample_step, tripl_step, tripl_nco_step;
 
-	always @(posedge i_clk)
+		always @(posedge i_clk)
 		if (ztimer)
 			sample_step <= nco_step
 			+ { {(32-16-5){next_sample[15]}}, next_sample, 5'h00 };
 
-	// Multiply by three ... never that easy
-	always @(posedge i_clk)
-		tripl_nco_step <= nco_step + { nco_step[30:0], 1'b0 };
-	always @(posedge i_clk)
+		// Multiply by three ... never that easy
+		always @(posedge i_clk)
+			tripl_nco_step <= nco_step + { nco_step[30:0], 1'b0 };
+
+		always @(posedge i_clk)
 		if (ztimer)
 			tripl_step <= tripl_nco_step
-			+ { {(32-16-5){next_sample[15]}}, next_sample, 5'h00 };
+			+ { {(32-16-5){next_sample[15]}}, next_sample, 5'h00 }
 			+ { {(32-16-6){next_sample[15]}}, next_sample, 6'h00 };
 
-	wire	[31:0]	base_step;
-	assign	nco_base_step = sample_step;
-	always @(posedge i_clk)
-		nco_phase_a <= nco_phase + sample_step;
-	always @(posedge i_clk)
-		nco_phase_b <= nco_phase + { sample_step[30:0], 1'b0 };
-	always @(posedge i_clk)
-		nco_phase_c <= nco_phase + tripl_step;
-	always @(posedge i_clk)
-		nco_phase <= nco_phase + { sample_step[29:0], 2'b00 };
+		always @(posedge i_clk)
+			nco_phase_a <= nco_phase + sample_step;
+		always @(posedge i_clk)
+			nco_phase_b <= nco_phase + { sample_step[30:0], 1'b0 };
+		always @(posedge i_clk)
+			nco_phase_c <= nco_phase + tripl_step;
+		always @(posedge i_clk)
+			nco_phase <= nco_phase + { sample_step[29:0], 2'b00 };
 
-	// Output a two-bit waveform.  Send each bit to GPIO port(s), with
-	// roughly the same number of ports per bit.
-	assign	o_tx = { nco_phase_a[31:30], nco_base_b[31:30],
+		// Output a two-bit waveform.  Send each bit to GPIO port(s),
+		// with roughly the same number of ports per bit.
+		assign	o_tx = { nco_phase_a[31:30], nco_phase_b[31:30],
 				nco_phase_c[31:30], nco_phase[31:30] };
-`else
-	// Adjust the gain for a maximum frequency offset just greater than
-	// 75 kHz.  (We would've done 75kHz exactly, but it required a multiply
-	// and this doesn't.)
-	reg	[31:0]	nco_phase;
-	initial	nco_phase = 32'h00;
-	always @(posedge i_clk)
-		nco_phase <= nco_phase + nco_step
-			+ { {(32-16-7){sample_out[15]}}, sample_out, 7'h00 };
-	assign	o_tx = nco_phase[31];
-`endif
+
+		// Make verilator happy
+		// {{{
+		// verilator lint_off UNUSED
+		wire	unused_oserdes;
+		assign	unused_oserdes = &{ 1'b0, nco_phase_a[29:0], nco_phase_b[29:0], nco_phase_c[29:0] };
+		// verilator lint_on UNUSED
+		// }}}
+	end else begin : NO_SERDES
+		// Adjust the gain for a maximum frequency offset just greater
+		// than 75 kHz.  (We would've done 75kHz exactly, but it
+		// required a multiply and this doesn't.)
+		initial	nco_phase = 32'h00;
+		always @(posedge i_clk)
+			nco_phase <= nco_phase + nco_step
+				+ { {(32-16-7){sample_out[15]}}, sample_out, 7'h00 };
+
+		assign	o_tx = {(8){nco_phase[31]}};
+	end endgenerate
 
 	always @(posedge i_clk)
-		if (i_wb_addr)
-			o_wb_data <= nco_step;
-		else
-			o_wb_data <= { reload_value, sample_out[15:1], o_int };
+	if (i_wb_addr)
+		o_wb_data <= nco_step;
+	else
+		o_wb_data <= { reload_value, sample_out[15:1], o_int };
 
 	initial	o_wb_ack = 1'b0;
 	always @(posedge i_clk)
-		o_wb_ack <= (i_wb_cyc)&&(i_wb_stb);
+		o_wb_ack <= (i_wb_stb);
+
 	assign	o_wb_stall = 1'b0;
 
+	// Make verilator happy
+	// {{{
+	// verilator lint_off UNUSED
+	wire	unused;
+	assign	unused = &{ 1'b0, sample_out };
+	// verilator lint_on UNUSED
+	// }}}
 endmodule
